@@ -17,7 +17,30 @@
 
 package pixelitor;
 
+import static java.lang.String.*;
+import static pixelitor.tools.pen.PenToolMode.*;
+
+import java.awt.EventQueue;
+import java.awt.GraphicsEnvironment;
+import java.awt.event.InputEvent;
+import java.awt.event.KeyEvent;
+import java.awt.geom.Rectangle2D;
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.ServerSocket;
+import java.net.Socket;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+
+import javax.swing.UIManager;
+
 import com.bric.util.JVM;
+
 import net.jafama.FastMath;
 import pixelitor.colors.FgBgColors;
 import pixelitor.colors.FillType;
@@ -41,22 +64,6 @@ import pixelitor.utils.Messages;
 import pixelitor.utils.Shapes;
 import pixelitor.utils.Utils;
 
-import javax.swing.*;
-import java.awt.EventQueue;
-import java.awt.GraphicsEnvironment;
-import java.awt.event.InputEvent;
-import java.awt.event.KeyEvent;
-import java.awt.geom.Rectangle2D;
-import java.io.File;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Locale;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.TimeUnit;
-
-import static java.lang.String.format;
-import static pixelitor.tools.pen.PenToolMode.EDIT;
-
 /**
  * The main class
  */
@@ -66,8 +73,88 @@ public class Pixelitor {
     private Pixelitor() {
         // should not be instantiated
     }
+    
+    private static final int PIXELITOR_PORT = 58779;
+	private static void startRPCServer()
+	{
+		Runnable r = new Runnable()
+		{
+			@Override
+			public void run()
+			{
+				while(true)
+				{
+					try(ServerSocket serverSocket = new ServerSocket(PIXELITOR_PORT))
+					{
+						while(true)
+						{
+							try
+							{
+								Socket clientSocket = serverSocket.accept();
+								InputStream is = clientSocket.getInputStream();
+								byte[] data = is.readAllBytes();
+								
+								ArrayList<String> args = new ArrayList<>();
+								int startArg = -1;
+								for(int i = 0; i < data.length; ++i)
+								{
+									if(startArg == -1 && data[i] != 0)
+										startArg = i;
+									if(data[i] == 0)
+									{
+										if(startArg != -1 && (i - startArg) > 0)
+											args.add(new String(data, startArg, i - startArg, StandardCharsets.UTF_8));
+										startArg = -1;
+									}
+								}
+						
+								for(String fileName : args)
+								{
+									File f = new File(fileName);
+						            if (f.exists()) {
+						                OpenSave.openFileAsync(f);
+						            } else {
+						                Messages.showError("File not found",
+						                        format("The file \"%s\" does not exist", f.getAbsolutePath()));
+						            }
+								}
+						
+								if(!args.isEmpty())
+								{
+									java.awt.EventQueue.invokeLater(new Runnable()
+									{
+										@Override
+										public void run()
+										{
+											var pw = PixelitorWindow.getInstance();
+											pw.deiconify();
+											pw.toFront();
+											pw.repaint();
+										}
+									});
+								}
+							}
+							catch(IOException e)
+							{
+								e.printStackTrace();
+							}
+						}
+					}
+					catch(IOException e1)
+					{
+						System.out.println(e1.getMessage());
+					}
+				}
+			}
+		};
+		
+		new Thread(r, "Pixelitor RPC").start();
+	}
 
     public static void main(String[] args) {
+    	
+    	startRPCServer();
+    	
         // the app can be put into development mode by
         // adding -Dpixelitor.development=true to the command line
         if ("true".equals(System.getProperty("pixelitor.development"))) {
